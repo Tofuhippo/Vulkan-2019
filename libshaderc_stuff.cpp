@@ -14,22 +14,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
+#include <iostream>
 #include <memory>
 #include <thread>
 #include <unordered_map>
 
-#include "SPIRV/spirv.hpp"
+#include <glslang/SPIRV/spirv.hpp>
 
-#include "common_shaders_for_test.h"
-#include "shaderc/shaderc.h"
-
-namespace {
-
-using testing::Each;
-using testing::HasSubstr;
-using testing::Not;
+#include <shaderc/shaderc.h>
 
 
 // Determines the kind of output required from the compiler.
@@ -75,7 +67,7 @@ shaderc_compilation_result_t MakeCompilationResult(
 bool CompilationResultIsSuccess(const shaderc_compilation_result_t result) {
   return shaderc_result_get_compilation_status(result) ==
          shaderc_compilation_status_success;
-
+}
 
 // Returns true if the given result contains a SPIR-V module that contains
 // at least the number of bytes of the header and the correct magic number.
@@ -86,4 +78,10 @@ bool ResultContainsValidSpv(shaderc_compilation_result_t result) {
   const uint32_t* bytes = static_cast<const uint32_t*>(
       static_cast<const void*>(shaderc_result_get_bytes(result)));
   return bytes[0] == spv::MagicNumber;
+}
+
+int main() {
+    std::cout << "Main Working" << std::endl;
+
+    return 0;
 }

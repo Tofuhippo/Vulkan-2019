@@ -12,7 +12,7 @@
 #include <vector>
 #include <optional>
 #include <set>
-#include<fstream>
+#include <fstream>
 
 
 
@@ -551,19 +551,31 @@ private:
 
     /**** Create Graphics Pipeline ****/
     void createGraphicsPipeline() {
-      // //use libshaderc to compile shaders internally! (NOT FROM TUTORIAL)
-      // shaderc_compiler_t compiler = shaderc_compiler_initialize();
-      // shaderc_compilation_result_t result = shaderc_compile_into_spv(
-      //    compiler, "#version 450\nvoid main() {}", 27,
-      //    shaderc_glsl_vertex_shader, "main.vert", "main", nullptr);
-      // // Do stuff with compilation results.
-      // shaderc_result_release(result);
-      // shaderc_compiler_release(compiler);
+      //use libshaderc to compile shaders internally! (NOT FROM TUTORIAL)
+      //first, convert .vert and .frag to strings
+      std::ifstream vertStream("shaders/vertexShaderHack.vert");
+      std::string vertShaderString((std::istreambuf_iterator<char>(vertStream)), std::istreambuf_iterator<char>());
+      std::ifstream fragStream("shaders/fragmentShaderRed.frag");
+      std::string fragShaderString((std::istreambuf_iterator<char>(fragStream)), std::istreambuf_iterator<char>());
+      //second, compile into SPIR-V, which return a shaderc_compilation_result_t
+      shaderc_compiler_t compiler = shaderc_compiler_initialize();
+      shaderc_compilation_result_t vertShaderCode = shaderc_compile_into_spv(
+         compiler, vertShaderString.c_str(), vertShaderString.size(),
+         shaderc_glsl_vertex_shader, "shaders/vertexShaderHack.vert", "main", nullptr);
+      shaderc_compilation_result_t fragShaderCode = shaderc_compile_into_spv(
+         compiler, fragShaderString.c_str(), fragShaderString.size(),
+         shaderc_glsl_fragment_shader, "shaders/fragmentShaderRed.frag", "main", nullptr);
+      //initialize vectors from the getter functions of the shaderc_compilation_result_t (|byte| == |char|)
+      std::vector<char> vertShaderCodeVector(shaderc_result_get_bytes(vertShaderCode),
+                          shaderc_result_get_bytes(vertShaderCode)+shaderc_result_get_length(vertShaderCode));
+      std::vector<char> fragShaderCodeVector(shaderc_result_get_bytes(vertShaderCode),
+                          shaderc_result_get_bytes(vertShaderCode)+shaderc_result_get_length(vertShaderCode));
+      // // if you were to do manual compilation, you might read the binary code like this
+      // auto vertShaderCodeVector = readFileSPV("shaders/vert.spv");
+      // auto fragShaderCodeVector = readFileSPV("shaders/frag.spv");
+      VkShaderModule vertShaderModule = createShaderModule(vertShaderCodeVector);
+      VkShaderModule fragShaderModule = createShaderModule(fragShaderCodeVector);
 
-      auto vertShaderCode = readFileSPV("shaders/vert.spv");
-      auto fragShaderCode = readFileSPV("shaders/frag.spv");
-      VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
-      VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
       //vertex shader in pipeline
       VkPipelineShaderStageCreateInfo vertShaderStageInfo = {};
       vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -715,9 +727,12 @@ private:
       }
       vkDestroyShaderModule(device, fragShaderModule, nullptr);
       vkDestroyShaderModule(device, vertShaderModule, nullptr);
+      shaderc_result_release(vertShaderCode);
+      shaderc_result_release(fragShaderCode);
+      shaderc_compiler_release(compiler);
     }
 
-    //for reading the shader's spir-v
+    //for reading the shader's binary spirv code
     static std::vector<char> readFileSPV(const std::string& filename) {
       std::ifstream file(filename, std::ios::ate | std::ios::binary);
       if (!file.is_open()) {
@@ -755,8 +770,8 @@ private:
       }
       return shaderModule;
     }
-
     /**** Create Graphics Pipeline ****/
+
 
     void mainLoop() {
       while (!glfwWindowShouldClose(window)) {
