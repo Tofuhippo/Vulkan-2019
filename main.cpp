@@ -1,7 +1,7 @@
 /*
  *  on mac, compile (adjst for library locations and include folder), comile with:
  *  
- *  clang++ -std=c++17 main.cpp -I/Users/washingtonj/code/vulkansdk-macos-1.1.126.0/macOS/include -L/Users/washingtonj/code/vulkansdk-macos-1.1.126.0/macOS/lib -lvulkan -lshaderc_combined -L/usr/local/Cellar/glfw/3.3/lib -lglfw -framework Cocoa -framework IOKit -framework CoreFoundation -framework CoreVideo
+   clang++ -std=c++17 main.cpp -I/Users/washingtonj/code/vulkansdk-macos-1.1.126.0/macOS/include -L/Users/washingtonj/code/vulkansdk-macos-1.1.126.0/macOS/lib -lvulkan -lshaderc_combined -L/usr/local/Cellar/glfw/3.3/lib -lglfw -framework Cocoa -framework IOKit -framework CoreFoundation -framework CoreVideo
  *  
  *  Thiw will output a .o file
  *  Breakdown of components:
@@ -382,6 +382,12 @@ private:
     /**** Use Compatable Physical Device to create Logical Device ****/
 
     /**** Create SwapChain ****/
+    /*
+      infrastructure that will own the buffers we will render to before 
+      we visualize them on the screen; essentially a queue of images that are 
+      waiting to be presented to the screen. synchronize the presentation of 
+      images with the refresh rate of the screen.
+    */
     void createSwapChain() {
       //see "Creating the Swap Chain" section of SwapChain Chapter in tutorial for details
       SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice);
@@ -436,10 +442,10 @@ private:
     }
 
     /*
-    Just checking if a swap chain is available is not sufficient, because it may
-    not actually be compatible with our window surface. Creating a swap chain
-    also involves a lot more settings than instance and device creation, so we
-    need to query for some more details.
+      Just checking if a swap chain is available is not sufficient, because it may
+      not actually be compatible with our window surface. Creating a swap chain
+      also involves a lot more settings than instance and device creation, so we
+      need to query for some more details.
     */
     struct SwapChainSupportDetails {
       VkSurfaceCapabilitiesKHR capabilities;
@@ -535,23 +541,27 @@ private:
       }
     }
     /**** Create Image Views ****/
-    /*Before we can finish creating the pipeline, we need to tell Vulkan about
-    the framebuffer attachments that will be used while rendering. We need to
-    specify how many color and depth buffers there will be, how many samples to
-    use for each of them and how their contents should be handled throughout the
-    rendering operations. All of this information is wrapped in a render pass object*/
+    
     /**** Create Render Pass ****/
+    /*
+      Before we can finish creating the pipeline, we need to tell Vulkan
+      the framebuffer attachments that will be used while rendering
+      how many color and depth buffers there will be
+      how many samples to use for each of them
+      how their contents should be handled throughout the rendering operations
+      All of this information is wrapped in a render pass object
+    */
     void createRenderPass() {
       //attachment description
       VkAttachmentDescription colorAttachment = {};
-      colorAttachment.format = swapChainImageFormat;
-      colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-      colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-      colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-      colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+      colorAttachment.format = swapChainImageFormat; //format of the color attachment should match the format of the swap chain images
+      colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT; //no multisampling yet
+      colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR; //what to do with the data in the attachment before rendering: CLEAR them (PRESERVE, DONT_CARE)
+      colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE; //what to do with the data in the attachment after rendering: STORE them to read (and render) later (DONT_CARE)
+      colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE; //we don't do anything with the stencil buffer
       colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-      colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-      colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+      colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED; //what we use images in the buffer for (color, actual image, destination)
+      colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR; //layout to automatically transition to when the render pass finishes
       //subpasses and attachment references
       VkAttachmentReference colorAttachmentRef = {};
       colorAttachmentRef.attachment = 0;
@@ -595,12 +605,18 @@ private:
                           shaderc_result_get_bytes(vertShaderCode)+shaderc_result_get_length(vertShaderCode));
       std::vector<char> fragShaderCodeVector(shaderc_result_get_bytes(fragShaderCode),
                           shaderc_result_get_bytes(fragShaderCode)+shaderc_result_get_length(fragShaderCode));
-      // // if you were to do manual compilation, you might read the binary code like this
-      // auto vertShaderCodeVector1 = readFileSPV("shaders/vert.spv"); //vulkansdk-macos-1.1.126.0/macOS/bin/glslc vertexShader.frag -o vert.spv
-      // auto fragShaderCodeVector1 = readFileSPV("shaders/frag.spv"); //vulkansdk-macos-1.1.126.0/macOS/bin/glslc fragmentShader.frag -o frag.spv
+      shaderc_result_release(vertShaderCode);
+      shaderc_result_release(fragShaderCode);
+      shaderc_compiler_release(compiler);
+      
+      // // if you were to do manual compilation (and produce vert.spv and frag.spv), you could read the binary code like this
+      // auto vertShaderCodeVector1 = readFileSPV("shaders/vert.spv"); //compile command: vulkansdk-macos-1.1.126.0/macOS/bin/glslc vertexShader.frag -o vert.spv
+      // auto fragShaderCodeVector1 = readFileSPV("shaders/frag.spv"); //compile command: vulkansdk-macos-1.1.126.0/macOS/bin/glslc fragmentShader.frag -o frag.spv
+      
       VkShaderModule vertShaderModule = createShaderModule(vertShaderCodeVector);
       VkShaderModule fragShaderModule = createShaderModule(fragShaderCodeVector);
 
+      //explicit declaration: Shader info
       //vertex shader in pipeline
       VkPipelineShaderStageCreateInfo vertShaderStageInfo = {};
       vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -617,6 +633,7 @@ private:
       fragShaderStageInfo.pSpecializationInfo = nullptr; //specify values for shader constants
       //for reference later
       VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
+
       //explicit declaration: Vertex input: format of the vertex data
       VkPipelineVertexInputStateCreateInfo vertexInputInfo = {};
       vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -627,11 +644,13 @@ private:
       //Attribute descriptions: type of the attributes passed to the vertex shader, which binding to load them from and at which offset
       vertexInputInfo.vertexAttributeDescriptionCount = 0;
       vertexInputInfo.pVertexAttributeDescriptions = nullptr;
+
       //explicit declaration: Input assembly:  what kind of geometry will be drawn from the vertices and if primitive restart should be enabled.
       VkPipelineInputAssemblyStateCreateInfo inputAssembly = {};
       inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
       inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST; //we're draing a triangle
       inputAssembly.primitiveRestartEnable = VK_FALSE;
+
       //explicit declaration: Viewport: where in the buffer we render to (usually 0,0 to width,height)
       VkViewport viewport = {};
       viewport.x = 0.0f;
@@ -658,6 +677,7 @@ private:
       viewportState.pViewports = &viewport;
       viewportState.scissorCount = 1;
       viewportState.pScissors = &scissor;
+
       //explicit declaration: Rasterizer: The rasterizer takes the geometry that is shaped by the vertices from the vertex shader and turns it into fragments to be colored by the fragment shader. It also performs depth testing, face culling and the scissor test, and it can be configured to output fragments that fill entire polygons or just the edges (wireframe rendering)
       VkPipelineRasterizationStateCreateInfo rasterizer = {};
       rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
@@ -671,6 +691,7 @@ private:
       rasterizer.depthBiasConstantFactor = 0.0f; // Optional
       rasterizer.depthBiasClamp = 0.0f; // Optional
       rasterizer.depthBiasSlopeFactor = 0.0f; // Optional
+
       //explicit declaration: Multisampling: perform anti-aliasing
       VkPipelineMultisampleStateCreateInfo multisampling = {};
       multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
@@ -710,16 +731,18 @@ private:
       colorBlending.blendConstants[1] = 0.0f; // Optional
       colorBlending.blendConstants[2] = 0.0f; // Optional
       colorBlending.blendConstants[3] = 0.0f; // Optional
+
       //explicit declaration: Dynamic state: don't have to recreate entire pipeline sometimes
       VkDynamicState dynamicStates[] = {
-          VK_DYNAMIC_STATE_VIEWPORT,
-          VK_DYNAMIC_STATE_LINE_WIDTH
+          VK_DYNAMIC_STATE_VIEWPORT,  //explicitly declacred viewport vkobject
+          VK_DYNAMIC_STATE_LINE_WIDTH //from rasterizer object
       };
       VkPipelineDynamicStateCreateInfo dynamicState = {};
       dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
       dynamicState.dynamicStateCount = 2;
       dynamicState.pDynamicStates = dynamicStates;
-      //explicit declaration: Pipeline layout: specify uniform values (TODO cuz we don't have any yet)
+
+      //explicit declaration: Pipeline layout: specify uniform values (uniform values in shaders, used to pass the transformation matrix to the vertex shader, to create texture samplers in the fragment shader.) (TODO cuz we don't have any yet)
       VkPipelineLayoutCreateInfo pipelineLayoutInfo = {};
       pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
       pipelineLayoutInfo.setLayoutCount = 0; // Optional
@@ -729,7 +752,20 @@ private:
       if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
           throw std::runtime_error("failed to create pipeline layout!");
       }
-      //final steps
+
+      /* Final declaration of pipeline information. Summary:
+       * VkPiplineShaderStageCreateInfo
+       * VkPipelineVertexInputStateCreateInfo
+       * VkPipelineInputAssemblyStateCreateInfo
+       * VkPipelineViewportStateCreateInfo
+       * VkPipelineRasterizationStateCreateInfo
+       * VkPipelineMultisampleStateCreateInfo
+       * Depth and stencil testing (not done yet)
+       * VkPipelineColorBlendStateCreateInfo
+       * VkPipelineDynamicStateCreateInfo
+       * VkPipelineLayoutCreateInfo
+       * VkRenderPass
+      */ 
       VkGraphicsPipelineCreateInfo pipelineInfo = {};
       pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
       pipelineInfo.stageCount = 2;
@@ -741,7 +777,7 @@ private:
       pipelineInfo.pMultisampleState = &multisampling;
       pipelineInfo.pDepthStencilState = nullptr; // Optional
       pipelineInfo.pColorBlendState = &colorBlending;
-      pipelineInfo.pDynamicState = nullptr; // Optional
+      pipelineInfo.pDynamicState = nullptr; //dynamicState; // Optional
       pipelineInfo.layout = pipelineLayout;
       pipelineInfo.renderPass = renderPass;
       pipelineInfo.subpass = 0;
@@ -752,9 +788,6 @@ private:
       }
       vkDestroyShaderModule(device, fragShaderModule, nullptr);
       vkDestroyShaderModule(device, vertShaderModule, nullptr);
-      shaderc_result_release(vertShaderCode);
-      shaderc_result_release(fragShaderCode);
-      shaderc_compiler_release(compiler);
     }
 
     //for reading the shader's binary spirv code
@@ -772,16 +805,16 @@ private:
     }
 
     /*
-    Creating a shader module is simple, we only need to specify a pointer to the
-    buffer with the bytecode and the length of it. This information is specified
-    in a VkShaderModuleCreateInfo structure. The one catch is that the size of
-    the bytecode is specified in bytes, but the bytecode pointer is a uint32_t
-    pointer rather than a char pointer. Therefore we will need to cast the
-    pointer with reinterpret_cast as shown below. When you perform a cast like
-    this, you also need to ensure that the data satisfies the alignment
-    requirements of uint32_t. Lucky for us, the data is stored in an std::vector
-    where the default allocator already ensures that the data satisfies the
-    worst case alignment requirements.
+      Creating a shader module is simple, we only need to specify a pointer to the
+      buffer with the bytecode and the length of it. This information is specified
+      in a VkShaderModuleCreateInfo structure. The one catch is that the size of
+      the bytecode is specified in bytes, but the bytecode pointer is a uint32_t
+      pointer rather than a char pointer. Therefore we will need to cast the
+      pointer with reinterpret_cast as shown below. When you perform a cast like
+      this, you also need to ensure that the data satisfies the alignment
+      requirements of uint32_t. Lucky for us, the data is stored in an std::vector
+      where the default allocator already ensures that the data satisfies the
+      worst case alignment requirements.
     */
     VkShaderModule createShaderModule(const std::vector<char>& code) {
       VkShaderModuleCreateInfo createInfo = {};
