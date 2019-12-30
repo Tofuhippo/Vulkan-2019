@@ -696,6 +696,7 @@ private:
       inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST; //we're draing a triangle
       inputAssembly.primitiveRestartEnable = VK_FALSE;
 
+      // DYNAMIC STATE NOW, SEE createCommandBuffers();. We still need to make all of this on the first pass
       //explicit declaration: Viewport: where in the buffer we render to (usually 0,0 to width,height)
       VkViewport viewport = {};
       viewport.x = 0.0f;
@@ -714,14 +715,12 @@ private:
       VkRect2D scissor = {};
       scissor.offset = {0, 0};
       scissor.extent = swapChainExtent;
-      /*In this tutorial we simply want to draw to the entire framebuffer, so
-      we'll specify a scissor rectangle that covers it entirely:.*/
       VkPipelineViewportStateCreateInfo viewportState = {};
       viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
       viewportState.viewportCount = 1;
-      viewportState.pViewports = &viewport;
+      viewportState.pViewports = nullptr; //now dynamic, see createCommandBuffers()
       viewportState.scissorCount = 1;
-      viewportState.pScissors = &scissor;
+      viewportState.pScissors = nullptr; //now dynamic, see createCommandBuffers()
 
       //explicit declaration: Rasterizer: The rasterizer takes the geometry that is shaped by the vertices from the vertex shader and turns it into fragments to be colored by the fragment shader. It also performs depth testing, face culling and the scissor test, and it can be configured to output fragments that fill entire polygons or just the edges (wireframe rendering)
       VkPipelineRasterizationStateCreateInfo rasterizer = {};
@@ -780,7 +779,8 @@ private:
       //explicit declaration: Dynamic state: don't have to recreate entire pipeline sometimes
       VkDynamicState dynamicStates[] = {
           VK_DYNAMIC_STATE_VIEWPORT,  //explicitly declacred viewport vkobject
-          VK_DYNAMIC_STATE_LINE_WIDTH //from rasterizer object
+          //VK_DYNAMIC_STATE_LINE_WIDTH //from rasterizer object, not needed with dynamic
+          VK_DYNAMIC_STATE_SCISSOR //dynamic state update
       };
       VkPipelineDynamicStateCreateInfo dynamicState = {};
       dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
@@ -822,7 +822,7 @@ private:
       pipelineInfo.pMultisampleState = &multisampling;
       pipelineInfo.pDepthStencilState = nullptr; // Optional
       pipelineInfo.pColorBlendState = &colorBlending;
-      pipelineInfo.pDynamicState = nullptr; //dynamicState; // Optional
+      pipelineInfo.pDynamicState = &dynamicState; //dynamicState; // Optional
       pipelineInfo.layout = pipelineLayout;
       pipelineInfo.renderPass = renderPass;
       pipelineInfo.subpass = 0;
@@ -964,6 +964,34 @@ private:
                             //record the cmd to //details of rp //primary or secondary cb exectution related
         vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
         vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+        //MIGRATED FROM PIPELINE CREATION FOR DYNAMIC USAGE (not from tutorial)
+        //explicit declaration: Viewport: where in the buffer we render to (usually 0,0 to width,height)
+        VkViewport viewport = {};
+        viewport.x = 0.0f;
+        viewport.y = 0.0f;
+        viewport.width = (float) swapChainExtent.width;
+        viewport.height = (float) swapChainExtent.height;
+        viewport.minDepth = 0.0f;
+        viewport.maxDepth = 1.0f;
+        /*Remember that the size of the swap chain and its images may differ from
+        the WIDTH and HEIGHT of the window. The swap chain images will be used as
+        framebuffers later on, so we should stick to their size.
+        The minDepth and maxDepth values specify the range of depth values to use
+        for the framebuffer. These values must be within the [0.0f, 1.0f] range,
+        but minDepth may be higher than maxDepth. If you aren't doing anything
+        special, then you should stick to the standard values of 0.0f and 1.0f.*/
+        VkRect2D scissor = {};
+        scissor.offset = {0, 0};
+        scissor.extent = swapChainExtent;
+        VkPipelineViewportStateCreateInfo viewportState = {};
+        viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+        viewportState.viewportCount = 1;
+        viewportState.pViewports = nullptr; //now dynamic, see next line
+        vkCmdSetViewport(commandBuffers[i], 0, 1, &viewport); 
+        viewportState.scissorCount = 1;
+        viewportState.pScissors = nullptr; //now dynamic, see next line
+        vkCmdSetScissor(commandBuffers[i], 0, 1, &scissor);
+        //End migration
         vkCmdDraw(commandBuffers[i], 3, 1, 0, 0);
         vkCmdEndRenderPass(commandBuffers[i]);
         if (vkEndCommandBuffer(commandBuffers[i]) != VK_SUCCESS) {
@@ -1098,8 +1126,9 @@ private:
         vkDestroyFramebuffer(device, swapChainFramebuffers[i], nullptr);
       }
       vkFreeCommandBuffers(device, commandPool, static_cast<uint32_t>(commandBuffers.size()), commandBuffers.data());
-      vkDestroyPipeline(device, graphicsPipeline, nullptr);
-      vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+      //with dynmaic states, these stay in cleanup()
+      //vkDestroyPipeline(device, graphicsPipeline, nullptr);
+      //vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
       vkDestroyRenderPass(device, renderPass, nullptr);
       for (size_t i = 0; i < swapChainImageViews.size(); i++) {
         vkDestroyImageView(device, swapChainImageViews[i], nullptr);
@@ -1123,7 +1152,7 @@ private:
       createSwapChain();
       createImageViews();
       createRenderPass();
-      createGraphicsPipeline();
+      // createGraphicsPipeline(); not needed with dynamic states
       createFramebuffers();
       createCommandBuffers();
     }
@@ -1131,6 +1160,9 @@ private:
     /**** FINAL CLEANUP ****/
     void cleanup() {
       cleanupOldSwapChain();
+
+      vkDestroyPipeline(device, graphicsPipeline, nullptr);
+      vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
 
       for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
