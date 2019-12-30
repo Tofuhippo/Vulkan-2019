@@ -40,11 +40,11 @@
 #include <fstream>
 
 
-
 const int WIDTH = 800;
 const int HEIGHT = 600;
 const std::vector<const char*> validationLayers = {
-    "VK_LAYER_KHRONOS_validation"
+    "VK_LAYER_KHRONOS_validation",
+    //"VK_LAYER_LUNARG_monitor"
 };
 const std::vector<const char*> deviceExtensions = { //for determining swapchain support
     VK_KHR_SWAPCHAIN_EXTENSION_NAME
@@ -56,6 +56,7 @@ const std::vector<const char*> deviceExtensions = { //for determining swapchain 
     const bool enableValidationLayers = true;
 #endif
 
+const int MAX_FRAMES_IN_FLIGHT = 2; //concurrent number of frames to be processed in the pipeline
 
 class HelloTriangleApplication {
 
@@ -83,13 +84,29 @@ private:
     VkRenderPass renderPass;
     VkPipelineLayout pipelineLayout; //for uniform shader values (TODO)
     VkPipeline graphicsPipeline;
+    std::vector<VkFramebuffer> swapChainFramebuffers;
+    //Render Ready up to this point
+    VkCommandPool commandPool;
+    std::vector<VkCommandBuffer> commandBuffers;
+    std::vector<VkSemaphore> imageAvailableSemaphores;
+    std::vector<VkSemaphore> renderFinishedSemaphores;
+    std::vector<VkFence> inFlightFences;
+    std::vector<VkFence> imagesInFlight; //tracking swapchain images to pair with fences and don't render to an image already in flight
+    size_t currentFrame = 0;
+    bool framebufferResized = false; //triggers swapchain recreation
 
     void initWindow() {
       glfwInit();
       glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-      glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+      glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
       window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan window", nullptr, nullptr);
+      glfwSetWindowUserPointer(window, this);
+      glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
+    }
 
+    static void framebufferResizeCallback(GLFWwindow* window, int width, int height) {
+      auto app = reinterpret_cast<HelloTriangleApplication*>(glfwGetWindowUserPointer(window));
+      app->framebufferResized = true;
     }
 
     void initVulkan() {
@@ -102,7 +119,13 @@ private:
       createRenderPass();
       //this is the piece that we're gonna abstract for classwork
       createGraphicsPipeline();
+      createFramebuffers();
+      //Render Ready up to this point
+      createCommandPool();
+      createCommandBuffers();
+      createSynchObjects();
     }
+
     /**** Create Vulkan Instance ****/
     void createInstance() {
       //check for validation layers when relevant
@@ -505,7 +528,12 @@ private:
       if (capabilities.currentExtent.width != UINT32_MAX) {
         return capabilities.currentExtent;
       } else {
-        VkExtent2D actualExtent = {WIDTH, HEIGHT};
+        int width, height;
+        glfwGetFramebufferSize(window, &width, &height);
+        VkExtent2D actualExtent = {
+          static_cast<uint32_t>(width),
+          static_cast<uint32_t>(height)
+        }; //Swapchain (and therefor swap extent) is changed with sufurface changes (like resizing the window), and we want the actual size
         actualExtent.width = std::max(capabilities.minImageExtent.width, std::min(capabilities.maxImageExtent.width, actualExtent.width));
         actualExtent.height = std::max(capabilities.minImageExtent.height, std::min(capabilities.maxImageExtent.height, actualExtent.height));
         return actualExtent;
@@ -514,6 +542,12 @@ private:
     /**** Create SwapChain ****/
 
     /**** Create Image Views ****/
+    /*
+     * To use any VkImage, including those in the swap chain, in the render pipeline we have to 
+     * create a VkImageView object. An image view is quite literally a view into an image. It 
+     * describes how to access the image and which part of the image to access, for example if 
+     * it should be treated as a 2D texture depth texture without any mipmapping levels.
+     */
     void createImageViews() {
       swapChainImageViews.resize(swapChainImages.size());
       for (size_t i = 0; i < swapChainImages.size(); i++) {
@@ -534,7 +568,7 @@ private:
         createInfo.subresourceRange.baseMipLevel = 0;
         createInfo.subresourceRange.levelCount = 1;
         createInfo.subresourceRange.baseArrayLayer = 0;
-        createInfo.subresourceRange.layerCount = 1;
+        createInfo.subresourceRange.layerCount = 1; 
         if (vkCreateImageView(device, &createInfo, nullptr, &swapChainImageViews[i]) != VK_SUCCESS) {
           throw std::runtime_error("failed to create image views!");
         }
@@ -552,6 +586,15 @@ private:
       All of this information is wrapped in a render pass object
     */
     void createRenderPass() {
+      //subpass dependencies added for transitions
+      VkSubpassDependency dependency = {};
+      dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+      dependency.dstSubpass = 0;
+      dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+      dependency.srcAccessMask = 0;
+      dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+      dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
       //attachment description
       VkAttachmentDescription colorAttachment = {};
       colorAttachment.format = swapChainImageFormat; //format of the color attachment should match the format of the swap chain images
@@ -577,6 +620,8 @@ private:
       renderPassInfo.pAttachments = &colorAttachment;
       renderPassInfo.subpassCount = 1;
       renderPassInfo.pSubpasses = &subpass;
+      renderPassInfo.dependencyCount = 1;
+      renderPassInfo.pDependencies = &dependency;
 
       if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) {
           throw std::runtime_error("failed to create render pass!");
@@ -830,25 +875,272 @@ private:
     }
     /**** Create Graphics Pipeline ****/
 
+    /**** Create Framebuffers ****/
+    /* we've set up the render pass to expect a single framebuffer with the same format as 
+     * the swap chain images. A framebuffer object references all of the VkImageView objects 
+     * that represent the attachments. In our case that will be only a single one: the 
+     * color attachment. However, the image that we have to use for the attachment depends 
+     * on which image the swap chain returns when we retrieve one for presentation. That 
+     * means that we have to create a framebuffer for all of the images in the swap chain 
+     * and use the one that corresponds to the retrieved image at drawing time.
+     */
+    void createFramebuffers() {
+      //resize vector to hold all the swapchain images, since we need one framebuffer per image
+      swapChainFramebuffers.resize(swapChainImageViews.size()); //recall the image views are how we see the images
+      for (size_t i = 0; i < swapChainImageViews.size(); i++) {
+        VkImageView attachments[] = {
+          swapChainImageViews[i]
+        };
+
+        VkFramebufferCreateInfo framebufferInfo = {};
+        framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        framebufferInfo.renderPass = renderPass;
+        framebufferInfo.attachmentCount = 1;
+        framebufferInfo.pAttachments = attachments;
+        framebufferInfo.width = swapChainExtent.width;
+        framebufferInfo.height = swapChainExtent.height;
+        framebufferInfo.layers = 1; //number of layers in image arrays. Our swap chain images are single images, so the number of layers is 1.
+
+        if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &swapChainFramebuffers[i]) != VK_SUCCESS) {
+          throw std::runtime_error("failed to create framebuffer!");
+        }
+      }
+    }
+    /**** Create Framebuffers ****/
+    //EVERYTHING IS SET UP FOR RENDERING AT THIS POINT NOW LET'S DO IT!
+
+    /**** Command Buffers and Pools ****/
+    /*
+     * Commands in Vulkan, like drawing operations and memory transfers, are not executed directly
+     *  using function calls. You have to record all of the operations you want to perform 
+     * in command buffer objects. The advantage of this is that all of the hard work of setting 
+     * up the drawing commands can be done in advance and in multiple threads. After that, 
+     * you just have to tell Vulkan to execute the commands in the main loop.
+     * Command buffers are executed by submitting them on one of the device queues (like the 
+     * graphics and presentation queues from findQueueFamilies). Command pools are specific
+     * to the type of queue they are submitted on. 
+     * In other words: Pools contain buffers, and both are specific to (and sit on top of) queue family
+     */
+    void createCommandPool() {
+      QueueFamilyIndices queueFamilyIndices = findQueueFamilies(physicalDevice);
+      VkCommandPoolCreateInfo poolInfo = {};
+      poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+      poolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily.value(); //we're drawing, so we want to use the graphics family
+      poolInfo.flags = 0; // Optional, consists of either VK_COMMAND_POOL_CREATE_TRANSIENT_BIT: Hint that command buffers are rerecorded with new commands very often (may change memory allocation behavior) or VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT: Allow command buffers to be rerecorded individually, without this flag they all have to be reset together
+      if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create command pool!");
+      }
+    }
+
+    void createCommandBuffers() {
+      commandBuffers.resize(swapChainFramebuffers.size());
+      VkCommandBufferAllocateInfo allocInfo = {};
+      allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+      allocInfo.commandPool = commandPool;
+      allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY; //VK_COMMAND_BUFFER_LEVEL_PRIMARY: Can be submitted to a queue for execution, but cannot be called from other command buffers. VK_COMMAND_BUFFER_LEVEL_SECONDARY: Cannot be submitted directly, but can be called from primary command buffers.
+      allocInfo.commandBufferCount = (uint32_t) commandBuffers.size();
+      if (vkAllocateCommandBuffers(device, &allocInfo, commandBuffers.data()) != VK_SUCCESS) {
+        throw std::runtime_error("failed to allocate command buffers!");
+      }
+      //begin recording command buffer
+      for (size_t i = 0; i < commandBuffers.size(); i++) {
+        VkCommandBufferBeginInfo beginInfo = {};
+        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        beginInfo.flags = 0; // Optional. VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT: The command buffer will be rerecorded right after executing it once. VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT: This is a secondary command buffer that will be entirely within a single render pass. VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT: The command buffer can be resubmitted while it is also already pending execution.
+        beginInfo.pInheritanceInfo = nullptr; // Used for secondary cbs to inherit state from primary
+        if (vkBeginCommandBuffer(commandBuffers[i], &beginInfo) != VK_SUCCESS) {
+          throw std::runtime_error("failed to begin recording command buffer!");
+        }
+        //Stuff to start the render pass
+        VkRenderPassBeginInfo renderPassInfo = {};
+        renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        renderPassInfo.renderPass = renderPass;
+        renderPassInfo.framebuffer = swapChainFramebuffers[i];
+        renderPassInfo.renderArea.offset = {0, 0};
+        renderPassInfo.renderArea.extent = swapChainExtent;
+        VkClearValue clearColor = {0.0f, 0.0f, 0.0f, 1.0f};
+        renderPassInfo.clearValueCount = 1;
+        renderPassInfo.pClearValues = &clearColor;
+                            //record the cmd to //details of rp //primary or secondary cb exectution related
+        vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+        vkCmdDraw(commandBuffers[i], 3, 1, 0, 0);
+        vkCmdEndRenderPass(commandBuffers[i]);
+        if (vkEndCommandBuffer(commandBuffers[i]) != VK_SUCCESS) {
+          throw std::runtime_error("failed to record command buffer!");
+        }
+      }
+    }
+    /**** Command Buffers and Pools ****/
+
+    /**** draw time ****/
+    /* Now we need to 
+     * 1. acquire an image from the swap chain, 
+     * 2. execute the right command buffer with that image as attachment in the framebuffer
+     * 3. and return the finished image to the swap chain
+     * This will be done in drawFrame(),which is called in mainLoop().
+     * Each of these events is set in motion using a single function call, but they are executed asynchronously. 
+     * The function calls will return before the operations are actually finished and the order of execution is 
+     * also undefined. That is unfortunate, because each of the operations depends on the previous one finishing.
+     * There are two ways of synchronizing swap chain events: fences and semaphores. 
+     * Fences - designed to synchronize your application itself with rendering operation
+     * Semaphores - used to synchronize operations within or across command queues
+     * So now we add a step 0, 1.5, and 2.5: (all of these are done for a specific frame in the max number of flights)
+     * 0. see if we are allowed to assign the gpu more work from the cpu by checking the fences
+     * 1.5 confirm the image has been aquired by waiting on the imageAvailableSemaphore
+     * 2.5 confirm the rending is complete by waiting on the renderFinshedSemaphore
+     * We also need to track the swapchain images that are already in flight so we don't render to them while they're in flight:
+     * 1.25 confirm that the image we're rending isn't already in flight
+     * We ALSO need to constantly make sure our swapchain fits the window surface. If we get an ERROR_OUT_OF_DATE, we recreate
+     * 1.125 (two parts) Recreate the swapchain when it no longer suits the window surface
+     */ 
+    void createSynchObjects() {
+      //semaphores (GPU-GPU) and fences (CPU-GPU)
+      imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+      renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+      inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
+      imagesInFlight.resize(swapChainImages.size(), VK_NULL_HANDLE);
+
+      VkSemaphoreCreateInfo semaphoreInfo = {};
+      semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+      VkFenceCreateInfo fenceInfo = {};
+      fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+      fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT; //this is the bit that is flipped when the fence is t/f 
+      for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphores[i]) != VK_SUCCESS ||
+            vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS ||
+            vkCreateFence(device, &fenceInfo, nullptr, &inFlightFences[i]) != VK_SUCCESS) {
+          throw std::runtime_error("failed to create synchronization objects for a frame!");
+        }
+      }
+    }
+
+    void drawFrame() {
+      //0
+      vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
+      //1
+      uint32_t imageIndex; //refers to the VkImage in our swapChainImages array, so we can pick the right command buffer
+      VkResult result = vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+      //1.125
+      if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+        recreateSwapChain();
+        return;
+      } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) { //both of these are success codes
+        throw std::runtime_error("failed to acquire swap chain image!");
+      }
+      //1.25
+      // Check if a previous frame is using this image (i.e. there is its fence to wait on)
+      if (imagesInFlight[imageIndex] != VK_NULL_HANDLE) {
+        vkWaitForFences(device, 1, &imagesInFlight[imageIndex], VK_TRUE, UINT64_MAX);
+      }
+      // Mark the image as now being in use by this frame
+      imagesInFlight[imageIndex] = inFlightFences[currentFrame];
+      //2
+      VkSubmitInfo submitInfo = {};
+      submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+      //until the image is ready: what are we waiting on, and which states of the pipeline do we wait to do
+      VkSemaphore waitSemaphores[] = {imageAvailableSemaphores[currentFrame]}; //1.5
+      VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT}; //VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT can substitutes the subpass we wrote into the render pass to signal that image is aquired and proper image layout transitions can occur
+      submitInfo.waitSemaphoreCount = 1;
+      submitInfo.pWaitSemaphores = waitSemaphores;
+      submitInfo.pWaitDstStageMask = waitStages;
+      //which command buffer to submit: the command buffer that binds the swap chain image we just acquired as color attachment.
+      submitInfo.commandBufferCount = 1;
+      submitInfo.pCommandBuffers = &commandBuffers[imageIndex];
+      //now we've finished the render part, so mark the semaphore that says we're ready for 3
+      VkSemaphore signalSemaphores[] = {renderFinishedSemaphores[currentFrame]}; //2.5
+      submitInfo.signalSemaphoreCount = 1;
+      submitInfo.pSignalSemaphores = signalSemaphores;
+      //reset the fences for the curent frame (but leave the ones that track images in flight)
+      vkResetFences(device, 1, &inFlightFences[currentFrame]);
+      //submit the command buffer to the graphics queue
+      if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS) {
+        throw std::runtime_error("failed to submit draw command buffer!");
+      }
+      //3
+      VkPresentInfoKHR presentInfo = {};
+      presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+      presentInfo.waitSemaphoreCount = 1;
+      presentInfo.pWaitSemaphores = signalSemaphores;
+      VkSwapchainKHR swapChains[] = {swapChain};
+      presentInfo.swapchainCount = 1;
+      presentInfo.pSwapchains = swapChains;
+      presentInfo.pImageIndices = &imageIndex;
+      presentInfo.pResults = nullptr; // Optional
+      //1.125
+      result = vkQueuePresentKHR(presentQueue, &presentInfo);
+      if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || framebufferResized) {
+        framebufferResized = false;
+        recreateSwapChain();
+      } else if (result != VK_SUCCESS) {
+        throw std::runtime_error("failed to present swap chain image!");
+      }
+      // application is rapidly submitting work in the drawFrame function, but doesn't actually check if any of it finishes. If the CPU is submitting work faster than the GPU can keep up with then the queue will slowly fill up with work. Additionally we are reusing the imageAvailableSemaphore and renderFinishedSemaphore for multiple frames at the same time.
+      //vkQueueWaitIdle(presentQueue); //Non concurrent solution: not optimal - entire pipeline is only in use once per frame
+      currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT; //with current frame, vectors for semaphores (and fences), and concurrency frame limit for the pipeline, we optimize gpu usage
+      //In order to actually prevent the CPU from submitting more work (instead of just preventing the processing of concurent frames overlapping), we need to add more than just gpu-gpu synchronization (semaphores) -- we still need cpu-gpu synchronization (fences).
+    }
+    /**** draw time ****/
 
     void mainLoop() {
       while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
+        drawFrame();
       }
+      vkDeviceWaitIdle(device); //all of the operations in drawFrame are asynchronous. That means that when we exit the loop in mainLoop, drawing and presentation operations may still be going on.
     }
 
-    void cleanup() {
+    /**** EVERYTHING ABOVE HERE IS WHAT DRAWS THE TRIANGLE. but, we need to handle some extra stuff ****/
+
+    /**** Swapchain recreation on surface change, etc... ****/
+    void cleanupOldSwapChain() {
+      for (size_t i = 0; i < swapChainFramebuffers.size(); i++) {
+        vkDestroyFramebuffer(device, swapChainFramebuffers[i], nullptr);
+      }
+      vkFreeCommandBuffers(device, commandPool, static_cast<uint32_t>(commandBuffers.size()), commandBuffers.data());
       vkDestroyPipeline(device, graphicsPipeline, nullptr);
       vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
       vkDestroyRenderPass(device, renderPass, nullptr);
-      for (auto imageView : swapChainImageViews) {
-        vkDestroyImageView(device, imageView, nullptr);
+      for (size_t i = 0; i < swapChainImageViews.size(); i++) {
+        vkDestroyImageView(device, swapChainImageViews[i], nullptr);
       }
       vkDestroySwapchainKHR(device, swapChain, nullptr);
+    }
+
+    void recreateSwapChain() {
+      //for re-surfacing
+      int width = 0, height = 0;
+      glfwGetFramebufferSize(window, &width, &height);
+      while (width == 0 || height == 0) {
+          glfwGetFramebufferSize(window, &width, &height);
+          glfwWaitEvents();
+      }
+      //don't do anything until everything is done
+      vkDeviceWaitIdle(device);
+      //get rid of old one
+      cleanupOldSwapChain();
+      //rebuild
+      createSwapChain();
+      createImageViews();
+      createRenderPass();
+      createGraphicsPipeline();
+      createFramebuffers();
+      createCommandBuffers();
+    }
+
+    /**** FINAL CLEANUP ****/
+    void cleanup() {
+      cleanupOldSwapChain();
+
+      for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
+        vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);
+        vkDestroyFence(device, inFlightFences[i], nullptr);
+      }
+      vkDestroyCommandPool(device, commandPool, nullptr);
       vkDestroyDevice(device, nullptr);
       vkDestroySurfaceKHR(instance, surface, nullptr);
       vkDestroyInstance(instance, nullptr);
-
       glfwDestroyWindow(window);
       glfwTerminate();
     }
