@@ -21,6 +21,9 @@
  *  -framework CoreVideo
  *  The -framework tags are compilations of shared libraries, header files, and other documentation that are shared by all processes on a single system
  *  
+ *ON LINUX:
+ * clang++ -std=c++17 main.cpp -I/home/mathcsadmin/Downloads/1.1.130.0/x86_64/include -L/home/mathcsadmin/Downloads/1.1.130.0/x86_64/lib -lvulkan -lshaderc_combined -L/usr/local/lib -lglfw3 -ldl -lpthread -lX11 -v
+
  */
 
 //#include <vulkan/vulkan.h> //already included with glfw3
