@@ -44,11 +44,12 @@
 #include <fstream>
 
 
-const int WIDTH = 800;
-const int HEIGHT = 600;
+const int WIDTH = 8;
+const int HEIGHT = 6;
 const std::vector<const char*> validationLayers = {
     "VK_LAYER_KHRONOS_validation",
     //"VK_LAYER_LUNARG_monitor"
+    //"VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT"
 };
 const std::vector<const char*> deviceExtensions = { //for determining swapchain support
     VK_KHR_SWAPCHAIN_EXTENSION_NAME
@@ -169,7 +170,7 @@ private:
       createSynchObjects();
     }
 
-    /**** Create Vulkan Instance ****/
+  /**** Create Vulkan Instance ****/
     void createInstance() {
       //check for validation layers when relevant
       if (enableValidationLayers) {
@@ -278,17 +279,17 @@ private:
         }
       }
     }
-    /**** Create Vulkan Instance ****/
+  /**** Create Vulkan Instance ****/
 
-    /**** Create Window Surface ****/
+  /**** Create Window Surface ****/
     void createSurface() {
       if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS) {
         throw std::runtime_error("failed to create window surface!");
       }
     }
-    /**** Create Window Surface ****/
+  /**** Create Window Surface ****/
 
-    /**** Pick Compatiable Physical Device ****/
+  /**** Pick Compatiable Physical Device ****/
     void pickPhysicalDevice() {
       //pick the gpu(s) to use
       uint32_t deviceCount = 0;
@@ -396,9 +397,9 @@ private:
 
       return requiredExtensions.empty();
     }
-    /**** Pick Compatiable Physical Device ****/
+  /**** Pick Compatiable Physical Device ****/
 
-    /**** Use Compatable Physical Device to create Logical Device ****/
+  /**** Use Compatable Physical Device to create Logical Device ****/
     void createLogicalDevice() { //initializes vk structs for queues in queueFamilies
       QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
       std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
@@ -445,9 +446,9 @@ private:
       //use build in fn to get logical device's queue handle (for the graphicsQueue)
       vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
     }
-    /**** Use Compatable Physical Device to create Logical Device ****/
+  /**** Use Compatable Physical Device to create Logical Device ****/
 
-    /**** Create SwapChain ****/
+  /**** Create SwapChain ****/
     /*
       infrastructure that will own the buffers we will render to before 
       we visualize them on the screen; essentially a queue of images that are 
@@ -582,12 +583,12 @@ private:
         return actualExtent;
       }
     }
-    /**** Create SwapChain ****/
+  /**** Create SwapChain ****/
 
-    /**** Create Image Views ****/
+  /**** Create Image Views ****/
     /*
      * To use any VkImage, including those in the swap chain, in the render pipeline we have to 
-     * create a VkImageView object. An image view is quite literally a view into an image. It 
+     * create a VkImageView object. An image view is literally a view into an image. It 
      * describes how to access the image and which part of the image to access, for example if 
      * it should be treated as a 2D texture depth texture without any mipmapping levels.
      */
@@ -617,9 +618,9 @@ private:
         }
       }
     }
-    /**** Create Image Views ****/
+  /**** Create Image Views ****/
     
-    /**** Create Render Pass ****/
+  /**** Create Render Pass ****/
     /*
       Before we can finish creating the pipeline, we need to tell Vulkan
       the framebuffer attachments that will be used while rendering
@@ -670,9 +671,9 @@ private:
           throw std::runtime_error("failed to create render pass!");
       }
     }
-    /**** Create Render Pass ****/
+  /**** Create Render Pass ****/
 
-    /**** Create Graphics Pipeline ****/
+  /**** Create Graphics Pipeline ****/
     void createGraphicsPipeline() {
       //use libshaderc to compile shaders internally! (NOT FROM TUTORIAL)
       //first, convert .vert and .frag to strings
@@ -774,7 +775,7 @@ private:
       rasterizer.polygonMode = VK_POLYGON_MODE_FILL; //fill, line, or point
       rasterizer.lineWidth = 1.0f;
       rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-      rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+      rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
       rasterizer.depthBiasEnable = VK_FALSE; //bias for shadowmapping
       rasterizer.depthBiasConstantFactor = 0.0f; // Optional
       rasterizer.depthBiasClamp = 0.0f; // Optional
@@ -917,9 +918,9 @@ private:
       }
       return shaderModule;
     }
-    /**** Create Graphics Pipeline ****/
+  /**** Create Graphics Pipeline ****/
 
-    /**** Create Framebuffers ****/
+  /**** Create Framebuffers ****/
     /* we've set up the render pass to expect a single framebuffer with the same format as 
      * the swap chain images. A framebuffer object references all of the VkImageView objects 
      * that represent the attachments. In our case that will be only a single one: the 
@@ -950,10 +951,11 @@ private:
         }
       }
     }
-    /**** Create Framebuffers ****/
-    //EVERYTHING IS SET UP FOR RENDERING AT THIS POINT NOW LET'S DO IT!
+  /**** Create Framebuffers ****/
+    
+  //EVERYTHING IS SET UP FOR RENDERING AT THIS POINT NOW LET'S DO IT!
 
-    /**** Command Buffers and Pools ****/
+  /**** Command Buffers and Pools ****/
     /*
      * Commands in Vulkan, like drawing operations and memory transfers, are not executed directly
      *  using function calls. You have to record all of the operations you want to perform 
@@ -1048,7 +1050,7 @@ private:
         }
       }
     }
-    /**** Command Buffers and Pools ****/
+  /**** Command Buffers and Pools ****/
 
     /**** Creating Vertex Buffer and Allocating GPU Memory for it ****/
     void createVertexBuffer() {
@@ -1093,7 +1095,7 @@ private:
       throw std::runtime_error("failed to find suitable memory type!"); //in case of no suitable memory found
     }
 
-    /**** draw time ****/
+  /**** draw time ****/
     /* Now we need to 
      * 1. acquire an image from the swap chain, 
      * 2. execute the right command buffer with that image as attachment in the framebuffer
@@ -1200,7 +1202,7 @@ private:
       currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT; //with current frame, vectors for semaphores (and fences), and concurrency frame limit for the pipeline, we optimize gpu usage
       //In order to actually prevent the CPU from submitting more work (instead of just preventing the processing of concurent frames overlapping), we need to add more than just gpu-gpu synchronization (semaphores) -- we still need cpu-gpu synchronization (fences).
     }
-    /**** draw time ****/
+  /**** draw time ****/
 
     void mainLoop() {
       while (!glfwWindowShouldClose(window)) {
