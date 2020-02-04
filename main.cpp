@@ -1,28 +1,31 @@
 /*
- *  on mac, compile (adjst for library locations and include folder), comile with:
+ * ON MAC
  *  
-   clang++ -std=c++17 main.cpp -I/Users/washingtonj/code/vulkansdk-macos-1.1.126.0/macOS/include -L/Users/washingtonj/code/vulkansdk-macos-1.1.126.0/macOS/lib -lvulkan -lshaderc_combined -L/usr/local/Cellar/glfw/3.3/lib -lglfw -framework Cocoa -framework IOKit -framework CoreFoundation -framework CoreVideo
+ *  clang++ -std=c++17 main.cpp -I/Users/washingtonj/code/vulkansdk-macos-1.1.126.0/macOS/include -L/Users/washingtonj/code/vulkansdk-macos-1.1.126.0/macOS/lib -lvulkan -lshaderc_combined -L/usr/local/Cellar/glfw/3.3/lib -lglfw -framework Cocoa -framework IOKit -framework CoreFoundation -framework CoreVideo
+ * NOTE: change the glfw library link (-lglfw) to glfw3 (-lglfw3) if you are not using homebrew.
+ * This will output a .o file
+ * Breakdown of components:
+ * clang++ : Compiler being used for C++ code
+ * -std=c++17 : C++ standard to use
+ * main.cpp : filename
+ * -I/Users/washingtonj/code/vulkansdk-macos-1.1.126.0/macOS/include : include folder, where the headers files are found (ie glfw3.h and shaderc.h)
+ * -L/Users/washingtonj/code/vulkansdk-macos-1.1.126.0/macOS/lib : library folder, where the .dylib files are found
+ *  -lvulkan : library for vulkan in the library folder, called libvulkan.dylib
+ *  -lshaderc_combined : library for shaderc internal SPIR-V (pre)compiler, called libshaderc_combined.a 
+ *  Note: Differnece between libraries that end in .dylib and .a are how they are used: .a is only used during compile time, .dylib is used while the .o file is running
+ * -L/usr/local/Cellar/glfw/3.3/lib : library folder, where I installed the glfw3 windowing stuff (via brew install glfw3)
+ * -lglfw : library for glfw3, called libglfw.dylib 
+ * -framework CoreFoundation 
+ * -framework Cocoa 
+ * -framework IOKit 
+ * -framework CoreVideo
+ * The -framework tags are compilations of shared libraries, header files, and other documentation that are shared by all processes on a single system
  *  
- *  Thiw will output a .o file
- *  Breakdown of components:
- *  clang++ : Compiler being used for C++ code
- *  -std=c++17 : C++ standard to use
- *  main.cpp : filename
- *  -I/Users/washingtonj/code/vulkansdk-macos-1.1.126.0/macOS/include : include folder, where the headers files are found (ie glfw3.h and shaderc.h)
- *  -L/Users/washingtonj/code/vulkansdk-macos-1.1.126.0/macOS/lib : library folder, where the .dylib files are found
- *   -lvulkan : library for vulkan in the library folder, called libvulkan.dylib
- *   -lshaderc_combined : library for shaderc internal SPIR-V (pre)compiler, called libshaderc_combined.a 
- *   Note: Differnece between libraries that end in .dylib and .a are how they are used: .a is only used during compile time, .dylib is used while the .o file is running
- *  -L/usr/local/Cellar/glfw/3.3/lib : library folder, where I installed the glfw3 windowing stuff (via brew install glfw3)
- *  -lglfw : library for glfw3, called libglfw.dylib 
- *  -framework Cocoa 
- *  -framework IOKit 
- *  -framework CoreFoundation 
- *  -framework CoreVideo
- *  The -framework tags are compilations of shared libraries, header files, and other documentation that are shared by all processes on a single system
- *  
- *ON LINUX:
+ * ON LINUX:
  * clang++ -std=c++17 main.cpp -I/home/mathcsadmin/Downloads/1.1.130.0/x86_64/include -L/home/mathcsadmin/Downloads/1.1.130.0/x86_64/lib -lvulkan -lshaderc_combined -L/usr/local/lib -lglfw3 -ldl -lpthread -lX11 -v
+ * 
+ * ON WINDOWS
+ * clang++ -std=c++17 main.cpp -I\VulkanSDK\1.1.130.0\Include -L\VulkanSDK\1.1.130.0\Lib -lvulkan-1 -lshaderc_combined -I\glfw-3.3.bin.WIN64\include -L\glfw-3.3.bin.WIN64\lib-vc2019 -lglfw3 -I\glm -lUser32.lib -lgdi32.lib -lshell32.lib -lvcruntime.lib -lmsvcrt.lib -llibcmt.lib -v
 
  */
 
@@ -47,8 +50,8 @@
 #include <fstream>
 
 
-const int WIDTH = 8;
-const int HEIGHT = 6;
+const int WIDTH = 800;
+const int HEIGHT = 600;
 const std::vector<const char*> validationLayers = {
     "VK_LAYER_KHRONOS_validation",
     //"VK_LAYER_LUNARG_monitor"
